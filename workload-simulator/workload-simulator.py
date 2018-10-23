@@ -50,6 +50,8 @@ executing the queries.
 #########################
 ## Workload Parameters ##
 #########################
+total_query = 0
+total_executed_query = 0
 
 MODEL = "ensemble"
 
@@ -85,9 +87,9 @@ PROJECTS = {
     },
     "admission": {
         "name": "admission",
-        "db": "mysql",
+        "db": "postgresql",
         "db_name": "adm",
-        'schema': "../mysql/gradAdmissions2009New.sql",
+        'schema': "/dataset/oltpbench/admission-workload/postgres-ddl/gradAdmissions2009New.sql",
         "workload": "admission-out.log",
         "original_dir": "simulatorFiles/combined-results",
         "predict_dirs": ["simulatorFiles/admission-online-prediction/%s-60" % MODEL,
@@ -147,7 +149,7 @@ DATABASES = {
         "column_set_sql": """SELECT table_name, column_name, DATA_TYPE FROM
                             INFORMATION_SCHEMA.COLUMNS where table_SCHEMA = 'adm';""",
         "drop_sql": "DROP INDEX `{}` ON {};",
-        'pwd': "pass",
+        # 'pwd': "pass",
         "explain_prefix": "explain format = json ",
     },
     "postgresql": {
@@ -169,8 +171,8 @@ DATABASES = {
                          column_name, data_type from information_schema.columns
                          where table_schema not in ('pg_catalog', 'information_schema');""",
         "drop_sql": "DROP INDEX {};",
-        "user": "admin",
-        'pwd': "password",
+        # "user": "admin",
+        # 'pwd': "password",
         "host": "localhost",
         "explain_prefix": "explain (format json) ",
     },
@@ -181,14 +183,16 @@ DATABASES = {
 ################
 
 parser = argparse.ArgumentParser(description='Populate fake database and simulate workload')
-parser.add_argument("-u", "--username", help="MySQL Log-in username (Default: root)",
+parser.add_argument("-u", "--username", help="Connect to the database with this username (Default: root)",
+                    type=str)
+parser.add_argument("--password", help="Connect to the database using this password (Default: password)",
                     type=str)
 parser.add_argument("--schema", help="SQL schema to populate database")
 parser.add_argument("--rows", help="Number of rows to populate database tables with (Default: 500)",
                         type=int)
 parser.add_argument("--workload", help="File containing newline separated queries")
-parser.add_argument("--host", help="Host for MySQL (Default: 127.0.0.1)")
-parser.add_argument("--port", help="Port for MySQL (Default: 3306)")
+parser.add_argument("--host", help="Hostname of the machine the DBMS is running on (Default: 127.0.0.1)")
+parser.add_argument("--port", help="Port on which the DBMS is listening for connections (Default: 5432)")
 parser.add_argument("--num_queries", type=int, help="Maximum number of queries to execute")
 parser.add_argument('--logical', action='store_true', help="Whether to use the logical clustering result")
 parser.add_argument('--static_suggest', action='store_true', help="Whether to suggest all the"
@@ -212,9 +216,10 @@ STATIC_SUGGEST = args.static_suggest
 
 
 HOST = args.host or "127.0.0.1"
-PORT = args.port or 3306
+PORT = args.port or 5432
 ROWS = args.rows or 500
 USERNAME = args.username or "root"
+PASSWORD = args.password or "password"
 NUM_ITERS = 1
 BATCH_LENGTH = 1  # Seconds
 DATA_PROCESSES = 8
@@ -243,8 +248,6 @@ QUERY_DATA_RE = re.compile(r'(\S+\s*[=<>]+\s*\S+)')
 HASH_SPLIT_RE = r'\\+'
 
 
-
-
 ######################
 ## Optimizer Thread ##
 ######################
@@ -264,29 +267,30 @@ class OptimizerThread(threading.Thread):
     def run(self):
         # Create index
         try:
-            pair = SimulatorObject.SuggestIndex(self.timestamp,
-                                                   self.duration,
-                                                   self.index_set)
-            if pair != None:
-                index = pair[1]
-                table = pair[0]
-                self.row.append(table + "." + index)
-                self.writer.writerow(self.row)
+            # pair = SimulatorObject.SuggestIndex(self.timestamp,
+            #                                        self.duration,
+            #                                        self.index_set)
+            # if pair != None:
+            #     index = pair[1]
+            #     table = pair[0]
+            #     self.row.append(table + "." + index)
+            #     self.writer.writerow(self.row)
 
-                print("\n#=============================")
-                print("Creating index {} on {}".format(index,table))
-                print("#=============================")
-                index_table = table.replace('.', '_')
-                query = "CREATE INDEX {} ON {}({});".format("{}_{}_idx".format(index_table, index), table, index)
-                self.cur.execute(query)
-                self.conn.commit()
-                print("#=============================")
-                print("Created index {} on {}".format(index,table))
-                print("#=============================")
-            else:
-                self.row.append("None")
-                self.writer.writerow(self.row)
-
+            #     print("\n#=============================")
+            #     print("Creating index {} on {}".format(index,table))
+            #     print("#=============================")
+            #     index_table = table.replace('.', '_')
+            #     query = "CREATE INDEX {} ON {}({});".format("{}_{}_idx".format(index_table, index), table, index)
+            #     self.cur.execute(query)
+            #     self.conn.commit()
+            #     print("#=============================")
+            #     print("Created index {} on {}".format(index,table))
+            #     print("#=============================")
+            # else:
+            self.row.append("None")
+            self.writer.writerow(self.row)
+            self.conn.commit()
+            exitDatabase(conn, cur)
         except mysql.connector.Error as err:
             print("\n#=============================")
             print("ERROR: %s", err)
@@ -424,14 +428,14 @@ def connectToPostgresDatabase(config, dbconfig):
     db_name = config['db_name']
 
     try:
-        cnx = psycopg2.connect(host=dbconfig['host'], dbname=db_name, user=dbconfig['user'],
-                password=dbconfig['pwd'])
+        cnx = psycopg2.connect(host=HOST, dbname=db_name, user=USERNAME,
+                password=PASSWORD, port=PORT)
         print("Sucessfuly found database '{}'".format(db_name))
     # Database doesnt exist, needs to be created
     except dbconfig['error'] as err:
         try:
-            cnx = psycopg2.connect(host=dbconfig['host'], dbname='postgres', user=dbconfig['user'],
-                    password=dbconfig['pwd'])
+            cnx = psycopg2.connect(host=HOST, dbname='postgres', user=USERNAME,
+                    password=PASSWORD, port=PORT)
             cnx.autocommit = True
             cursor = cnx.cursor()
             createDatabase(config, dbconfig, cnx, cursor)
@@ -442,8 +446,8 @@ def connectToPostgresDatabase(config, dbconfig):
             print("ERROR: Failed to connect to PostgreSQL server")
             exit(1)
 
-        cnx = psycopg2.connect(host=dbconfig['host'], dbname=db_name, user=dbconfig['user'],
-                password=dbconfig['pwd'])
+        cnx = psycopg2.connect(host=HOST, dbname=db_name, user=USERNAME,
+                password=PASSWORD, port=PORT)
 
         cnx.autocommit = True
         cursor = cnx.cursor()
@@ -902,12 +906,12 @@ def executeQueryMultiProcess(config, dbconfig, pool, batch):
         except multiprocessing.TimeoutError as err:
             print("Connection {} didn't finish execution.".format(conn))
             continue
-
-        print("Connection {} with results {} {} {}".format(conn, res[0], res[1], len(batch_dict[conn])))
-        exec_q += res[0]
-        curr_q += res[1]
-        latency = latency + res[2]
-        scan_stats.MergeStats(res[3])
+        if res != None:
+            print("Connection {} with results {} {} {}".format(conn, res[0], res[1], len(batch_dict[conn])))
+            exec_q += res[0]
+            curr_q += res[1]
+            latency = latency + res[2]
+            scan_stats.MergeStats(res[3])
 
     return (exec_q, curr_q, latency, scan_stats)
 
@@ -976,18 +980,19 @@ def executeQuery(config, dbconfig, batch):
             res = (exec_q, curr_q, latency, scan_stats)
 
         except dbconfig['error'] as err:
-            #print("\n")
-            #print(batch[curr_q][1])
-            #print(err)
-            #print("\n")
-            #input("break")
+            # print("\n")
+            # print(batch[curr_q][1])
+            # print(err)
+            # print("\n")
+            # input("break")
             continue
     cnx.commit()
-
     return res
 
 
 def runTrace(config, dbconfig, cnx, cursor):
+    total_query = 0
+    total_executed_query = 0
     print("Start changing configurations...")
     if config['db'] == 'mysql':
         cursor.execute("SET FOREIGN_KEY_CHECKS=0;") # this is a hack, sorry
@@ -1010,138 +1015,150 @@ def runTrace(config, dbconfig, cnx, cursor):
             n = min(n, NUM_QUERIES)
 
         f.seek(0)
-        for i in tqdm(range(n), desc="Processing Trace", ncols=100):
-            line = f.readline()
-            line = unpackLine(line)
-            if line is not None:
-                file_lines.append(line)
+        for j in range(10):
+            file_lines = []
+            for i in tqdm(range(int(n / 10)), desc="Processing Trace", ncols=100):
+                line = f.readline()
+                line = unpackLine(line)
+                if line is not None:
+                    file_lines.append(line)
+            # Create data from Trace
+            #userInput = input("Create data from trace? (y/n) ")
+            #if userInput.lower() == "y":
+            #    for i in tqdm(range(len(file_lines)), desc="Creating Data from Trace", ncols=100):
+            #        query = file_lines[i][1].lower()
+            #        if "join" in query: # Skip joins
+            #            continue
+            #        insertData(cursor, query)
+            #    cnx.commit()
+
+            # Drop Indexs
+            #dropIndexes(config, dbconfig, cursor)
+
+            # Run through trace in minute batches
+            # Execute a minute worth of queries in one second
+            MIN_TIMESTAMP = file_lines[0][0]
+            MAX_TIMESTAMP = file_lines[-1][0]
+            NUM_MINUTES = int(((MAX_TIMESTAMP - MIN_TIMESTAMP).total_seconds())/60)
+
+            # Store Threads
+            simThreads = []
+            
+            result_file = 'admission_results.csv'
+            # Don't pollute the real output in explain mode
+            # if not EXPLAIN:
+            #     result_file = "results-" + MODEL + "/" + config['output_file']
+            # else:
+            #     result_file = "stats/explain-" + config['output_file']
+
+            # if LOGICAL:
+            #     result_file = "logical-" + result_file
+
+            # if STATIC_SUGGEST:
+            #     result_file = "static2-" + result_file
+            #     config['index_duration'] = 2
+            #     print(result_file)
+
+            pool = Pool(processes = config['num_process'], initializer = initWorker, initargs=(config, dbconfig, executeQuery))
+
+            for i in range(NUM_ITERS):
+                print("# ==========================")
+                print("# Iteration {}".format(i))
+                print("# ==========================")
+                with open(result_file, "w+") as file:
+                    writer = csv.writer(file)
+                    latency = []
+                    total_scan_stats = ScanStats()
+                    index_cnt = 0
+                    print("Start Warming Up.\n")
+
+                    for j in range(0, NUM_MINUTES, config["trace_aggregate"]):
+                        curr_timestamp = MIN_TIMESTAMP + timedelta(minutes=j)
+                        batch, file_lines = getBatch(curr_timestamp +
+                                timedelta(minutes=config["trace_aggregate"]), file_lines)
+
+                        #Store results
+                        row = []
+                        row.append(curr_timestamp)
+
+                        exec_q, curr_q, latest_latency, scan_stats = executeQueryMultiProcess(config,
+                                dbconfig, pool, batch)
+
+                        latency = latency + latest_latency
+
+                        current_latency = sorted(latency[-3000:])
+                        percentile_index = (len(current_latency) // 100) + 1
+                        percentile_latency = current_latency[-percentile_index]
+
+                        if not EXPLAIN:
+                            row.append(float(exec_q)/BATCH_LENGTH) # Add throughput
+                            row.append(percentile_latency)
+                        else:
+                            row += scan_stats.GetStats()
+
+                        # Print Confirmation
+                        print("Batch: {} {}mins".format(curr_timestamp, config['trace_aggregate']))
+                        print("Throughput: {} queries/sec".format(float(exec_q)/BATCH_LENGTH))
+                        print("99% Latency: {} sec/query".format(float(percentile_latency)))
+                        print("Executed: {}/{} queries ({}%)\n".format(curr_q,len(batch),
+                            float(exec_q)/float(len(batch) + 1) * 100))
+
+                        total_query = total_query + len(batch) + 1
+                        total_executed_query = total_executed_query + exec_q
+
+                        if EXPLAIN:
+                            print("current scan stats: " + str(scan_stats) + "\n")
+                            print("total scan stats: " + str(total_scan_stats) + "\n")
+
+                        if j // config['trace_aggregate'] * BATCH_LENGTH < config['warmup_period']:
+                            print("Continue warm up ...\n")
+                            if STATIC_SUGGEST is False:
+                                continue
+
+                        # Create at most 20 indexes
+                        if STATIC_SUGGEST and index_cnt >= 20:
+                            config["index_duration"] = 1000000
+
+                        total_scan_stats.MergeStats(scan_stats)
+                        writer.writerow(row)
+                        file.flush()
+
+                        # Create Index every index_duration seconds
+                        # if ((j // config['trace_aggregate']+ 1) % config["index_duration"] == 0):
+                        #     # give beginning timestamp
+                        #     start_timestamp = curr_timestamp - timedelta(minutes=(config["index_duration"]-1))
+
+                        #     index_cnx, index_cursor = connectToDatabase(config, dbconfig)
+
+                        #     t = OptimizerThread(dbconfig,
+                        #                     timestamp=start_timestamp,
+                        #                     duration=config["index_duration"] * config['trace_aggregate'],
+                        #                     index_set=getIndexSet(config, dbconfig, cursor),
+                        #                     conn=index_cnx,
+                        #                     cur=index_cursor,
+                        #                     writer=writer,
+                        #                     row=row)
+                        #     simThreads.append(t)
+                        #     t.start()
+                        #     if STATIC_SUGGEST:
+                        #         t.join()
+                        #     index_cnt += 1
+                        # else:
+                        #     row.append("None")
+                        #     writer.writerow(row)
+                        #     file.flush()
+
+            pool.terminate()
     f.close()
 
-    # Create data from Trace
-    #userInput = input("Create data from trace? (y/n) ")
-    #if userInput.lower() == "y":
-    #    for i in tqdm(range(len(file_lines)), desc="Creating Data from Trace", ncols=100):
-    #        query = file_lines[i][1].lower()
-    #        if "join" in query: # Skip joins
-    #            continue
-    #        insertData(cursor, query)
-    #    cnx.commit()
-
-    # Drop Indexs
-    dropIndexes(config, dbconfig, cursor)
-
-    # Run through trace in minute batches
-    # Execute a minute worth of queries in one second
-    MIN_TIMESTAMP = file_lines[0][0]
-    MAX_TIMESTAMP = file_lines[-1][0]
-    NUM_MINUTES = int(((MAX_TIMESTAMP - MIN_TIMESTAMP).total_seconds())/60)
-
-    # Store Threads
-    simThreads = []
     
-    # Don't pollute the real output in explain mode
-    if not EXPLAIN:
-        result_file = "results-" + MODEL + "/" + config['output_file']
-    else:
-        result_file = "stats/explain-" + config['output_file']
-
-    if LOGICAL:
-        result_file = "logical-" + result_file
-
-    if STATIC_SUGGEST:
-        result_file = "static2-" + result_file
-        config['index_duration'] = 2
-        print(result_file)
-
-    pool = Pool(processes = config['num_process'], initializer = initWorker,  initargs=(config, dbconfig, executeQuery))
-
-    for i in range(NUM_ITERS):
-        print("# ==========================")
-        print("# Iteration {}".format(i))
-        print("# ==========================")
-        with open(result_file, "w+") as file:
-            writer = csv.writer(file)
-            latency = []
-            total_scan_stats = ScanStats()
-            index_cnt = 0
-            print("Start Warming Up.\n")
-
-            for j in range(0, NUM_MINUTES, config["trace_aggregate"]):
-                curr_timestamp = MIN_TIMESTAMP + timedelta(minutes=j)
-                batch, file_lines = getBatch(curr_timestamp +
-                        timedelta(minutes=config["trace_aggregate"]), file_lines)
-
-                #Store results
-                row = []
-                row.append(curr_timestamp)
-
-                exec_q, curr_q, latest_latency, scan_stats = executeQueryMultiProcess(config,
-                        dbconfig, pool, batch)
-
-                latency = latency + latest_latency
-
-                current_latency = sorted(latency[-3000:])
-                percentile_index = (len(current_latency) // 100) + 1
-                percentile_latency = current_latency[-percentile_index]
-
-                if not EXPLAIN:
-                    row.append(float(exec_q)/BATCH_LENGTH) # Add throughput
-                    row.append(percentile_latency)
-                else:
-                    row += scan_stats.GetStats()
-
-                # Print Confirmation
-                print("Batch: {} {}mins".format(curr_timestamp, config['trace_aggregate']))
-                print("Throughput: {} queries/sec".format(float(exec_q)/BATCH_LENGTH))
-                print("99% Latency: {} sec/query".format(float(percentile_latency)))
-                print("Executed: {}/{} queries ({}%)\n".format(curr_q,len(batch),
-                    float(exec_q)/float(len(batch) + 1) * 100))
-
-                if EXPLAIN:
-                    print("current scan stats: " + str(scan_stats) + "\n")
-                    print("total scan stats: " + str(total_scan_stats) + "\n")
-
-                if j // config['trace_aggregate'] * BATCH_LENGTH < config['warmup_period']:
-                    print("Continue warm up ...\n")
-                    if STATIC_SUGGEST is False:
-                        continue
-
-                # Create at most 20 indexes
-                if STATIC_SUGGEST and index_cnt >= 20:
-                    config["index_duration"] = 1000000
-
-                total_scan_stats.MergeStats(scan_stats)
-
-                # Create Index every index_duration seconds
-                if ((j // config['trace_aggregate']+ 1) % config["index_duration"] == 0):
-                    # give beginning timestamp
-                    start_timestamp = curr_timestamp - timedelta(minutes=(config["index_duration"]-1))
-
-                    index_cnx, index_cursor = connectToDatabase(config, dbconfig)
-
-                    t = OptimizerThread(dbconfig,
-                                    timestamp=start_timestamp,
-                                    duration=config["index_duration"] * config['trace_aggregate'],
-                                    index_set=getIndexSet(config, dbconfig, cursor),
-                                    conn=index_cnx,
-                                    cur=index_cursor,
-                                    writer=writer,
-                                    row=row)
-                    simThreads.append(t)
-                    t.start()
-                    if STATIC_SUGGEST:
-                        t.join()
-                    index_cnt += 1
-                else:
-                    row.append("None")
-                    writer.writerow(row)
-                    file.flush()
 
 
     if config['db'] == 'mysql':
         cursor.execute("SET FOREIGN_KEY_CHECKS=1;") # this is a hack, sorry
         cnx.commit()
-
+    print("Executed: {}/{} queries ({}%)\n".format(total_executed_query, total_query,
+                    float(total_executed_query)/float(total_query) * 100))
     print("Done!")
 
 def getColumnCardinality(config, dbconfig, cnx, cursor):
@@ -1169,19 +1186,21 @@ if __name__ == '__main__':
 
     cnx, cursor = connectToDatabase(config, dbconfig)
 
-    column_card = getColumnCardinality(config, dbconfig, cnx, cursor)
+    # column_card = getColumnCardinality(config, dbconfig, cnx, cursor)
 
-    SimulatorObject = Simulator(config['schema'],
-                                config['original_dir'],
-                                config['predict_dirs'],
-                                config['cluster_assignment'],
-                                config['cluster_coverage'],
-                                config['cluster_num'],
-                                config['predict_aggregate'],
-                                column_card,
-                                STATIC_SUGGEST
-                                )
-
+    # SimulatorObject = Simulator(config['schema'],
+    #                             config['original_dir'],
+    #                             config['predict_dirs'],
+    #                             config['cluster_assignment'],
+    #                             config['cluster_coverage'],
+    #                             config['cluster_num'],
+    #                             config['predict_aggregate'],
+    #                             column_card,
+    #                             STATIC_SUGGEST
+    #                             )
+    total_query = 0
+    total_executed_query = 0
     runTrace(config, dbconfig, cnx, cursor)
+
     exitDatabase(cnx, cursor)
 

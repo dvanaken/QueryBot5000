@@ -5,6 +5,7 @@ import datetime
 import re
 import hashlib
 
+csv.field_size_limit(sys.maxsize)
 # ==============================================
 # PROJECT CONFIGURATIONS
 # ==============================================
@@ -18,7 +19,7 @@ PROJECTS = {
         "param_index": 4,
         "conn_pos": 1,
         "time_stamp_format": "%Y-%m-%d %H:%M:%S",
-        "schema": "../mysql/combinedTiramisuSchema.sql",
+        "schema": "../../postgres/combinedTiramisuSchema.sql",
     },
     "admission": {
         "name": "admission",
@@ -28,7 +29,7 @@ PROJECTS = {
         "query_index": 4,
         "conn_pos": 2,
         "time_stamp_format": "%Y-%m-%d %H:%M:%S",
-        'schema': "../mysql/gradAdmissions2009New.sql",
+        'schema': "/dataset/oltpbencg/admission-workload/postgres-ddl/gradAdmissions2009New.sql",
     },
     "oli": {
         "name": "oli",
@@ -133,6 +134,7 @@ def preprocess(config, path, num_logs = None):
         for clean_enum in enum_dict:
             query = query.replace(clean_enum, enum_dict[clean_enum])
 
+        query = query.replace("`", "")
         print(str(time_stamp) + ',' + query_info[config['conn_pos']] + ',' + query)
 
 if __name__ == '__main__':
